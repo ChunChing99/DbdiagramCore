@@ -1,0 +1,6 @@
+@DbdiagramCore.Server_HostAddress = http://localhost:5202
+
+GET {{DbdiagramCore.Server_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

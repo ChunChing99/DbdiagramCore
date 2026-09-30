@@ -1,0 +1,21 @@
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  font-family: 'Segoe UI', 'Microsoft JhengHei', system-ui, -apple-system, sans-serif;
+  font-size: 14px;
+  color: #24292f;
+  background: #f6f8fa;
+  -webkit-font-smoothing: antialiased;
+}

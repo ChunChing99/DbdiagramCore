@@ -1,0 +1,443 @@
+Project SkyEyesWeb_BHCMU {
+  database_type: 'SQL Server'
+  Note: '院所派車 / 預約系統資料庫 Schema（自 database_schema.md 轉換）'
+}
+
+//////////////////////////////////////////////////////////////////
+// 系統資料表
+//////////////////////////////////////////////////////////////////
+
+// 使用者資料表
+Table SYS_tbUser {
+  User_no varchar(20) [pk, note: '使用者帳號']
+  User_name nvarchar(20) [note: '使用者名稱']
+  Dept varchar(20) [note: '部門代碼']
+  User_tel varchar(20) [note: '使用者電話']
+  User_pwd varchar(20) [note: '使用者密碼']
+  UserType_id varchar(20) [note: '使用者類別（分類用，可不使用）']
+  UserGroup_id int [note: '使用者群組 (FK: Web_Group)']
+  User_admin bit [default: 0, note: '管理者權限 1=啟用，0=停用']
+  User_status bit [default: 1, note: '啟用狀態 1=啟用，0=停用']
+  FirstPwd bit [default: 0, note: '是否已首次更新密碼']
+  LastPwd datetime [default: '2050-01-01', note: '密碼最後更新時間']
+  FailedLoginNum int [default: 0, note: '登入失敗次數']
+  LockDt datetime [note: '帳號鎖定時間']
+  update_dt datetime [note: '更新時間']
+  update_user nvarchar(20) [note: '更新人員']
+  insert_dt datetime [default: `getdate()`, note: '新增時間']
+  insert_user nvarchar(20) [note: '新增人員']
+}
+
+// 密碼驗證規則表
+Table SYS_tbPasswordValidationRules {
+  Id int [pk, increment, note: '流水號']
+  RuleName nvarchar(100) [not null, note: '規則名稱']
+  MinLength int [not null, default: 8, note: '密碼最小長度']
+  PasswordChangeFrequencyDays int [not null, default: 90, note: '密碼更新頻率（天）']
+  MinUppercaseLength int [not null, default: 1, note: '大寫英文最小數量']
+  MinLowercaseLength int [not null, default: 1, note: '小寫英文最小數量']
+  MinSpecialCharLength int [not null, default: 1, note: '特殊符號最小數量']
+  MinNumericLength int [not null, default: 1, note: '數字最小數量']
+  TokenLimit int [not null, default: 480, note: 'Token 期限（分鐘）']
+  MaxFailedLogin int [not null, default: 3, note: '登入失敗次數上限']
+  AccountLockoutTime int [not null, default: 30, note: '帳號鎖定時間（分鐘）']
+  IsActive bit [not null, default: 1, note: '是否啟用']
+  update_dt datetime [note: '更新時間']
+  update_user nvarchar(20) [note: '更新人員']
+  insert_dt datetime [default: `getdate()`, note: '新增時間']
+  insert_user nvarchar(20) [note: '新增人員']
+}
+
+// 會員資料表
+Table SYS_tbMember {
+  Member_Id varchar(20) [pk, note: '會員代碼']
+  UID varchar(20) [not null, note: 'UID對應條碼UID']
+  Member_Name nvarchar(20) [not null, note: '會員姓名']
+  Member_Pwd varchar(20) [not null, note: '會員密碼']
+  MemberGroup_Id varchar(20) [note: '會員群組']
+  Member_Birthday varchar(20) [note: '會員生日']
+  Member_Tel varchar(20) [note: '會員電話']
+  Member_Email varchar(20) [note: '會員信箱']
+  Member_ChartNo varchar(20) [note: '會員病歷號碼']
+  Note nvarchar(200) [note: '備註']
+  Member_Status bit [default: 1, note: '會員啟用停用 0停用 1啟用']
+  update_dt datetime [note: '更新時間']
+  update_user nvarchar(20) [note: '更新人員']
+  insert_dt datetime [default: `getdate()`, note: '新增時間']
+  insert_user nvarchar(20) [note: '新增人員']
+}
+
+// 會員聯絡人表
+Table SYS_tbMemberContact {
+  MemberContact_Id varchar(20) [pk, note: '會員聯絡人代碼']
+  Member_Id varchar(20) [not null, note: '會員代碼 (FK: SYS_tbMember)']
+  MemberContact_Name nvarchar(20) [not null, note: '會員聯絡人姓名']
+  SortOrder tinyint [note: '排序']
+  Member_Relationship nvarchar(20) [note: '會員關係']
+  MemberContact_Tel varchar(20) [note: '會員聯絡人電話']
+  Note nvarchar(200) [note: '備註']
+  update_dt datetime [note: '更新時間']
+  update_user nvarchar(20) [note: '更新人員']
+  insert_dt datetime [default: `getdate()`, note: '新增時間']
+  insert_user nvarchar(20) [note: '新增人員']
+}
+
+// 會員地點表
+Table SYS_tbMemberLocation {
+  MemberLocation_Id varchar(20) [pk, note: '會員地點']
+  Member_Id varchar(20) [note: '會員代碼 (FK: SYS_tbMember)']
+  SortOrder tinyint [note: '排序']
+  MemberLocation_Name nvarchar(20) [note: '會員地點名稱']
+  MemberLocation_Address nvarchar(300) [note: '會員地點地址']
+  MemberLocation_AddressFix nvarchar(300) [note: '會員地點地址正規化']
+  Wgs_X decimal(10,6) [note: '經緯度X']
+  Wgs_Y decimal(9,6) [note: '經緯度Y']
+  MemberLocation_Default bit [note: '會員預設地點']
+  Note nvarchar(200) [note: '備註']
+  update_dt datetime [note: '更新時間']
+  update_user nvarchar(20) [note: '更新人員']
+  insert_dt datetime [default: `getdate()`, note: '新增時間']
+  insert_user nvarchar(20) [note: '新增人員']
+}
+
+//////////////////////////////////////////////////////////////////
+// 車輛管理與個人化設定
+//////////////////////////////////////////////////////////////////
+
+// 車輛資料表
+Table SYS_tbCar {
+  Car_Id nvarchar(20) [pk, note: '車號']
+  Car_Licence nvarchar(20) [note: '車牌']
+  Corp varchar(20) [note: '貨物主代碼']
+  Dept varchar(20) [note: '貨倉代碼']
+  Dt datetime [default: `getdate()`, note: '更新時間']
+  Wgs_X varchar(10) [note: '經度']
+  Wgs_Y nchar(10) [note: '緯度']
+}
+
+// 車輛軌跡記錄表
+Table SYS_ttTrack {
+  Car_Id nvarchar(20) [not null, note: '車號 (PK, FK: SYS_tbCar)']
+  Dt datetime [not null, note: '時間 (PK)']
+  Status tinyint [not null, note: '狀態 (PK)']
+  X float [not null, note: 'X 座標 (TM2)']
+  Y float [not null, note: 'Y 座標 (TM2)']
+  Wgs_X varchar(10) [note: '經度 (WGS)']
+  Wgs_Y varchar(9) [note: '緯度 (WGS)']
+  InsertTime datetime [default: `getdate()`, note: '新增時間']
+
+  indexes {
+    (Car_Id, Dt, Status) [pk, name: 'PK_SYS_ttTrack2']
+  }
+}
+
+// 車輛狀態代碼表
+Table SYS_tcCarStatus {
+  Status tinyint [pk, note: '狀態代碼']
+  Descr nvarchar(40) [note: '狀態說明']
+}
+
+// 車輛檢視欄位定義表
+Table SYS_tcUserViewCarItemList {
+  Item_Name varchar(50) [pk, note: '欄位名稱']
+  Item_Title varchar(50) [note: '欄位標題']
+  Item_Sort tinyint [default: 0, note: '排序']
+}
+
+// 使用者車輛檢視欄位設定表（複合主鍵：User_No + Item_Name）
+Table SYS_trUserViewCarItem {
+  User_No varchar(20) [not null, note: '帳號 (PK, FK: SYS_tbUser)']
+  Item_Name varchar(50) [not null, note: '欄位名稱 (PK, FK: SYS_tcUserViewCarItemList)']
+  Item_Sort tinyint [default: 0, note: '排序']
+
+  indexes {
+    (User_No, Item_Name) [pk]
+  }
+}
+
+//////////////////////////////////////////////////////////////////
+// 業務資料表
+//////////////////////////////////////////////////////////////////
+
+// 派車主檔表（複合主鍵：Delivery_No + Delivery_Date + TaskDept_Id + Route_Id）
+Table BH_ttTask_Master {
+  Delivery_No varchar(20) [not null, note: '派車單號 (PK)']
+  Delivery_Date date [not null, note: '派車日期 (PK)']
+  TaskDept_Id varchar(20) [not null, note: '任務部門 (PK)']
+  Route_Id varchar(20) [not null, note: '車次 (PK)']
+  Trip_No varchar(20) [note: '趟次']
+  DeliveryType_Id varchar(20) [note: '車趟類型 (FK: SYS_tcDeliveryType)']
+  Car_Id nvarchar(20) [note: '派車車機ID']
+  Car_Licence nvarchar(20) [note: '派車車牌']
+  Emp_Id varchar(20) [note: '派車司機ID']
+  Emp_Name nvarchar(20) [note: '派車司機姓名']
+  MaxLord_Qty int [note: '車輛裝載上限_數量']
+  DeliveryStatus_Id varchar(20) [note: '派車狀態 (FK: SYS_tcDeliveryStatus)']
+  Dsp_Dt datetime [note: '派車時間']
+  Im_Start_Dt datetime [note: '表定出發時間']
+  Pl_Start_Dt datetime [note: '預計出發時間']
+  Ac_Start_Dt datetime [note: '實際出發時間']
+  Pl_End_Dt datetime [note: '預計結束時間']
+  Ac_End_Dt datetime [note: '實際結束時間']
+  Total_DspDistance decimal(18,3) [note: '總派送距離']
+  update_dt datetime [note: '更新時間']
+  update_user nvarchar(20) [note: '更新人員']
+  insert_dt datetime [default: `getdate()`, note: '新增時間']
+  insert_user nvarchar(20) [note: '新增人員']
+
+  indexes {
+    (Delivery_No, Delivery_Date, TaskDept_Id, Route_Id) [pk, name: 'PK_BH_ttTask_Master']
+  }
+}
+
+// 任務明細表（複合主鍵：Task_No + TaskType_Id + TaskDept_Id）
+Table BH_ttTask_Data {
+  Task_No varchar(20) [not null, note: '任務單號 (PK)']
+  TaskType_Id varchar(20) [not null, note: '任務單號類型 (PK)']
+  TaskDept_Id varchar(20) [not null, note: '任務部門 (PK)']
+  Task_Date datetime [note: '預約時間']
+  Booking_Dt date [note: '銷貨日期']
+  Delivery_No varchar(20) [note: '派車單號']
+  Delivery_Date date [note: '派車日期']
+  Route_id varchar(20) [note: '車次']
+  Trip_No varchar(20) [note: '趟次']
+  RouteSeq int [note: '路順']
+  Dsp_dt datetime [note: '派車時間']
+  PickupPerson int [note: '預約搭乘人數']
+  Payment int [note: '車資']
+  Member_Id varchar(20) [note: '會員代碼 (FK: SYS_tbMember)']
+  Member_Name nvarchar(20) [note: '會員姓名']
+  Member_Tel varchar(20) [note: '會員電話']
+  MemberContact_Id varchar(20) [note: '會員聯絡人代碼 (FK: SYS_tbMemberContact)']
+  MemberContact_Name nvarchar(20) [note: '會員聯絡人姓名']
+  Member_Relationship nvarchar(20) [note: '會員關係']
+  MemberContact_Tel varchar(20) [note: '會員聯絡人電話']
+  MemberLocation_Address_Start nvarchar(300) [note: '上車地址']
+  MemberLocation_AddressFix_Start nvarchar(300) [note: '上車地址正規化']
+  MemberLocation_Address_End nvarchar(300) [note: '下車地址']
+  MemberLocation_AddressFix_End nvarchar(300) [note: '下車地址正規化']
+  Rem nvarchar(300) [note: '備註']
+  Station_Id_Start varchar(20) [note: '上車站點']
+  Station_Id_End varchar(20) [note: '下車站點']
+  Start_Wgs_X decimal(10,6) [note: '上車經緯度X']
+  Start_Wgs_Y decimal(9,6) [note: '上車經緯度Y']
+  End_Wgs_X decimal(10,6) [note: '下車經緯度X']
+  End_Wgs_Y decimal(9,6) [note: '下車經緯度Y']
+  TaskStatus_Id varchar(10) [note: '任務狀態']
+  Im_Arrive_dt datetime [note: '表定上車時間']
+  Pl_Arrive_dt datetime [note: '預定上車時間']
+  Est_Arrive_dt datetime [note: '預計上車時間']
+  Ac_Arrive_dt datetime [note: '實際上車時間']
+  Im_Leave_dt datetime [note: '表訂下車時間']
+  Pl_Leave_dt datetime [note: '預定下車時間']
+  Est_Leave_dt datetime [note: '預計下車時間']
+  Ac_Leave_dt datetime [note: '實際下車時間']
+  update_dt datetime [note: '更新時間']
+  update_user nvarchar(20) [note: '更新人員']
+  insert_dt datetime [default: `getdate()`, note: '新增時間']
+  insert_user nvarchar(20) [note: '新增人員']
+
+  indexes {
+    (Task_No, TaskType_Id, TaskDept_Id) [pk, name: 'PK_BH_ttTask_Data']
+  }
+}
+
+// 站點資料表（複合主鍵：Route_Id + Station_Id + Station_Dept）
+Table BH_tbStation {
+  Station_Dept varchar(20) [not null, note: '站點部門 (PK)']
+  Route_Id varchar(20) [not null, note: '路線代碼 (PK)']
+  Station_Id varchar(20) [not null, note: '站點代碼 (PK)']
+  Station_Name nvarchar(20) [note: '站點名稱']
+  Node_id int [note: 'Node_id']
+  Wgs_X decimal(10,6) [note: '經度']
+  Wgs_Y decimal(10,6) [note: '緯度']
+  Station_Status bit [default: 1, note: '站點狀態 0=停用 1=啟用']
+  Rem nvarchar(300) [note: '備註']
+  update_dt datetime [note: '更新時間']
+  update_user nvarchar(20) [note: '更新人員']
+  insert_dt datetime [default: `getdate()`, note: '新增時間']
+  insert_user nvarchar(20) [note: '新增人員']
+
+  indexes {
+    (Route_Id, Station_Id, Station_Dept) [pk, name: 'PK_BH_tbStation']
+  }
+}
+
+// 滿意度回饋表
+Table BH_ttFeedback {
+  Task_No varchar(20) [pk, note: '任務單號 (PK, FK: BH_ttTask_Data)']
+  Satisfaction01 tinyint [note: '滿意度調查問題1']
+  Satisfaction02 tinyint [note: '滿意度調查問題2']
+  Satisfaction03 tinyint [note: '滿意度調查問題3']
+  Satisfaction04 tinyint [note: '滿意度調查問題4']
+  Feedback nvarchar(200) [note: '意見回饋']
+  insert_dt datetime [default: `getdate()`, note: '新增時間']
+}
+
+// 公告資料表
+Table BH_ttBulletin {
+  Bulletin_Id int [pk, increment, note: '公告代碼']
+  Title nvarchar(100) [not null, note: '公告標題']
+  Contents nvarchar(max) [note: '公告內容（Modal 顯示用）']
+  Bulletin_Date date [not null, note: '公告日期（列表顯示用）']
+  SortOrder int [not null, default: 0, note: '排序（數字越小越前面，可用於置頂）']
+  Bulletin_Status bit [not null, default: 1, note: '公告狀態 1=啟用（顯示），0=停用（隱藏）']
+  update_dt datetime [note: '更新時間']
+  update_user nvarchar(20) [note: '更新人員']
+  insert_dt datetime [not null, default: `getdate()`, note: '新增時間']
+  insert_user nvarchar(20) [note: '新增人員']
+
+  indexes {
+    (Bulletin_Status, Bulletin_Date) [name: 'IX_BH_ttBulletin_ListQuery', note: '前台列表查詢用，實際排序為 Bulletin_Date DESC']
+  }
+}
+
+// 派車狀態代碼表
+Table SYS_tcDeliveryStatus {
+  DeliveryStatus_Id varchar(20) [pk, note: '派車狀態代碼']
+  DeliveryStatus_Name nvarchar(20) [note: '派車狀態名稱']
+  update_dt datetime [note: '更新時間']
+  update_user nvarchar(20) [note: '更新人員']
+  insert_dt datetime [default: `getdate()`, note: '新增時間']
+  insert_user nvarchar(20) [note: '新增人員']
+}
+
+// 任務類別代碼表
+Table SYS_tcTaskType {
+  TaskType_Id varchar(20) [pk, note: '任務類別代碼']
+  TaskType_Name nvarchar(20) [note: '任務類別名稱']
+  update_dt datetime [note: '更新時間']
+  update_user nvarchar(20) [note: '更新人員']
+  insert_dt datetime [default: `getdate()`, note: '新增時間']
+  insert_user nvarchar(20) [note: '新增人員']
+}
+
+// 車趟類型代碼表
+Table SYS_tcDeliveryType {
+  DeliveryType_Id varchar(20) [pk, note: '車趟類型代碼']
+  DeliveryType_Name nvarchar(20) [note: '車趟類型名稱']
+  update_dt datetime [note: '更新時間']
+  update_user nvarchar(20) [note: '更新人員']
+  insert_dt datetime [default: `getdate()`, note: '新增時間']
+  insert_user nvarchar(20) [note: '新增人員']
+}
+
+//////////////////////////////////////////////////////////////////
+// 網站系統表
+//////////////////////////////////////////////////////////////////
+
+// 群組資料表
+Table Web_Group {
+  UserGroup_id int [pk, increment, note: '群組代碼']
+  PerGroupName nvarchar(50) [note: '群組名稱']
+  Ord int [note: '排序']
+  IsLock int [default: 0, note: '群組鎖定 0=前台可刪除，1=前台不可刪除']
+  update_dt datetime [note: '更新時間']
+  update_user nvarchar(20) [note: '更新人員']
+  insert_dt datetime [default: `getdate()`, note: '新增時間']
+  insert_user nvarchar(20) [note: '新增人員']
+}
+
+// 選單資料表
+Table Web_Menu {
+  m_Id int [pk, increment, note: '流水號']
+  m_Type nvarchar(10) [not null, default: 'app', note: '型態']
+  m_Name nvarchar(20) [note: '節點名稱']
+  m_Path nvarchar(50) [note: '節點路徑']
+  m_Ord int [not null, default: 0, note: '排序']
+  m_Pid int [not null, default: 0, note: '父節點 ID（0 = 根節點）(FK: Web_Menu)']
+  m_Icon nvarchar(50) [note: 'Icon 路徑']
+  m_NewWindow nvarchar(1) [not null, default: 'N', note: '是否開新分頁（Y/N）']
+  m_Enabled nvarchar(1) [not null, default: 'Y', note: '是否啟用（Y/N）']
+  m_Visible nvarchar(1) [not null, default: 'Y', note: '是否顯示（Y/N）']
+  m_Global nvarchar(1) [not null, default: 'N', note: '是否為全域（Y/N）']
+  m_Auth nvarchar(1) [not null, default: 'Y', note: '是否驗證登入狀態（Y/N）']
+  m_Createdate datetime [not null, default: `getdate()`, note: '新增時間']
+}
+
+// 選單群組權限表（複合主鍵：UserGroup_id + m_Id）
+Table Web_MenuGroupList {
+  UserGroup_id int [not null, note: '群組編碼 (PK, FK: Web_Group)']
+  m_Id int [not null, note: '目錄編碼 (PK, FK: Web_Menu)']
+  fun_Search bit [default: 0, note: '搜尋功能 0=否，1=是']
+  fun_Insert bit [default: 0, note: '新增功能 0=否，1=是']
+  fun_Update bit [default: 0, note: '更新功能 0=否，1=是']
+  fun_Delete bit [default: 0, note: '刪除功能 0=否，1=是']
+  fun_Download bit [default: 0, note: '下載功能 0=否，1=是']
+
+  indexes {
+    (UserGroup_id, m_Id) [pk]
+  }
+}
+
+//////////////////////////////////////////////////////////////////
+// 系統紀錄表
+//////////////////////////////////////////////////////////////////
+
+// 操作日誌表
+Table Web_Log {
+  Id bigint [pk, increment, note: '流水號']
+  User_No nvarchar(20) [note: '帳號 (FK: SYS_tbUser)']
+  WebPage nvarchar(100) [note: '網頁路徑']
+  Api nvarchar(100) [note: 'API 路徑']
+  PostData nvarchar(max) [note: '傳送資料']
+  Token nvarchar(max) [note: 'Web Token']
+  ReturnNumber nvarchar(5) [note: '回傳狀態代碼']
+  ReturnMsg nvarchar(max) [note: '回傳訊息']
+  SystemTime datetime [not null, default: `getdate()`, note: '系統時間']
+}
+
+// 登入日誌表
+Table Web_Login_log {
+  User_No nvarchar(20) [note: '登入帳號 (FK: SYS_tbUser)']
+  ReturnRes bit [note: '登入結果 1=成功，0=失敗']
+  LoginTime datetime [not null, default: `getdate()`, note: '登入時間']
+}
+
+// Token 管理表
+Table Web_Token {
+  "datetime" nvarchar(20) [pk, note: '時間戳記']
+  Token nvarchar(max) [note: 'Token 內容']
+  SignOut datetime [note: '登出時間']
+}
+
+//////////////////////////////////////////////////////////////////
+// 資料表關聯（Ref）
+//////////////////////////////////////////////////////////////////
+
+// 使用者與權限
+Ref: SYS_tbUser.UserGroup_id > Web_Group.UserGroup_id
+Ref: Web_MenuGroupList.UserGroup_id > Web_Group.UserGroup_id
+Ref: Web_MenuGroupList.m_Id > Web_Menu.m_Id
+Ref: Web_Menu.m_Pid > Web_Menu.m_Id
+
+// 使用者車輛檢視設定
+Ref: SYS_trUserViewCarItem.User_No > SYS_tbUser.User_no
+Ref: SYS_trUserViewCarItem.Item_Name > SYS_tcUserViewCarItemList.Item_Name
+
+// 稽核追蹤
+Ref: Web_Log.User_No > SYS_tbUser.User_no
+Ref: Web_Login_log.User_No > SYS_tbUser.User_no
+
+// 車輛軌跡
+Ref: SYS_ttTrack.Car_Id > SYS_tbCar.Car_Id
+Ref: SYS_ttTrack.Status > SYS_tcCarStatus.Status
+
+// 會員資料
+Ref: SYS_tbMemberContact.Member_Id > SYS_tbMember.Member_Id
+Ref: SYS_tbMemberLocation.Member_Id > SYS_tbMember.Member_Id
+Ref: BH_ttTask_Data.Member_Id > SYS_tbMember.Member_Id
+Ref: BH_ttTask_Data.MemberContact_Id > SYS_tbMemberContact.MemberContact_Id
+
+// 業務派車與任務
+// Delivery_No + Delivery_Date + Route_id/Route_Id 為 Master/Data 間的邏輯關聯（非資料庫層強制 FK）
+Ref: BH_ttTask_Data.(Delivery_No, Delivery_Date, Route_id) > BH_ttTask_Master.(Delivery_No, Delivery_Date, Route_Id)
+Ref: BH_ttTask_Master.Car_Id > SYS_tbCar.Car_Id
+Ref: BH_ttTask_Master.DeliveryStatus_Id > SYS_tcDeliveryStatus.DeliveryStatus_Id
+Ref: BH_ttTask_Master.DeliveryType_Id > SYS_tcDeliveryType.DeliveryType_Id
+Ref: BH_ttTask_Data.TaskType_Id > SYS_tcTaskType.TaskType_Id
+Ref: BH_ttFeedback.Task_No - BH_ttTask_Data.Task_No
+
+// 站點資料（Station_Id 為複合鍵的一部分，此處沿用文件既有的簡化表示）
+Ref: BH_ttTask_Data.Station_Id_Start > BH_tbStation.Station_Id
+Ref: BH_ttTask_Data.Station_Id_End > BH_tbStation.Station_Id

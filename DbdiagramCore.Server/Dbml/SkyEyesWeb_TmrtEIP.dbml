@@ -1,0 +1,545 @@
+// SkyEyesWeb_TmrtEIP 資料庫 Schema — DBML（供 https://dbdiagram.io 匯入顯示關聯圖）
+//
+// 依 docs/schemas/database_schema.md 現況產生，共 19 張資料表，與
+// docs/schemas/postgresql_create_tables.sql 的 DDL 一致。
+//
+// 使用方式：開啟 https://dbdiagram.io/d，貼上本檔全部內容即可看到 ER 圖。
+//
+// ⚠️ 這是目標 PostgreSQL Schema（尚未實際建立/遷移），目前實際運行中的資料庫
+// 仍是 SQL Server，詳見 docs/server/README.md「資料庫引擎（PostgreSQL 遷移中）」。
+
+Project SkyEyesWeb_TmrtEIP {
+  database_type: 'PostgreSQL'
+  Note: '中捷 EIP。SYS_tb=基本資料表，SYS_tt=交易/紀錄表，SYS_tc=代碼表。'
+}
+
+// ---------------------------------------------------------------------------
+// 系統資料表
+// ---------------------------------------------------------------------------
+
+Table SYS_tbMenu {
+  Id integer [pk, increment, note: '流水號']
+  Type varchar(10) [not null, default: 'app', note: '型態']
+  Name varchar(20) [note: '節點名稱']
+  Path varchar(50) [note: '節點路徑']
+  Ord integer [not null, default: 0, note: '排序']
+  ParentId integer [not null, default: 0, note: '父節點id；0=頂層，邏輯參照 Id，未建立實體 FK']
+  Icon varchar(50) [note: 'Icon路徑']
+  NewWindow varchar(1) [not null, default: 'N', note: '是否開新分頁']
+  Enabled varchar(1) [not null, default: 'Y', note: '是否啟用']
+  Visible varchar(1) [not null, default: 'Y', note: '是否顯示']
+  Global varchar(1) [not null, default: 'N', note: '是否為全域']
+  Auth varchar(1) [not null, default: 'Y', note: '是否驗證登入的狀態']
+  CreateDate timestamp [not null, default: `now()`, note: '新增時間']
+
+  Note: '選單資料表'
+}
+
+// ---------------------------------------------------------------------------
+// 編碼/序號管理資料表（各模組統一發號，取代各自 DateTime.Now 拼字串）
+// 編碼規則四段組成：DocType-OrgCode-PeriodKey-Seq，格式樣板由程式碼定義；
+// PeriodKey 歸零週期統一固定為「日」，格式固定為 YYYYMMDD。
+// 不是計數器，每發行一個號碼即一列，PK 本身保證不會重複發放，同時就是發行歷程。
+// ---------------------------------------------------------------------------
+
+Table SYS_ttIssuedSerialNumber {
+  DocType varchar(4) [pk, note: '業務/單據類型碼，2~4碼，如 PA、DRAW、LEAVE']
+  OrgCode varchar(10) [pk, default: '', note: '組織/部門代碼，選填；不分部門時為空字串（哨兵值，非 NULL）']
+  PeriodKey varchar(8) [pk, note: '日期序列碼，固定8碼，格式統一為 YYYYMMDD（每日歸零重新編號）']
+  Seq integer [pk, note: '動態流水號，本次實際發出的號碼']
+  IssuedCode varchar(50) [unique, not null, note: '完整編號字串，如 PA-RD-20260911-0042，保留當時實際發出的樣子']
+  IssuedUser_No varchar(20) [note: '開立帳號，邏輯參照 SYS_tbUser.User_No']
+  IssuedTime timestamp [not null, default: `now()`, note: '發行時間']
+
+  Note: '已發行序號紀錄表；PK為(DocType,OrgCode,PeriodKey,Seq)，本身即完整發行歷程，取號靠 MAX(Seq)+1 插入衝突重試，不需 Redis'
+}
+
+Table SYS_tbPasswordValidationRules {
+  Id integer [pk, increment, note: '流水號']
+  RuleName varchar(100) [not null, note: '名稱']
+  MinLength integer [not null, default: 8, note: '密碼最小長度']
+  PasswordChangeFrequencyDays integer [not null, default: 90, note: '密碼更新頻率']
+  MinUppercaseLength integer [not null, default: 1, note: '大寫英文最小長度']
+  MinLowercaseLength integer [not null, default: 1, note: '小寫英文最小長度']
+  MinSpecialCharLength integer [not null, default: 1, note: '特殊符號最小長度']
+  MinNumericLength integer [not null, default: 1, note: '數字最小長度']
+  TokenLimit integer [not null, default: 480, note: 'Token期限(分鐘)']
+  MaxFailedLogin integer [not null, default: 3, note: '登入失敗次數上限']
+  AccountLockoutTime integer [not null, default: 30, note: '帳號鎖定時間(分鐘)']
+  IsActive boolean [not null, default: true, note: '是否啟用']
+  update_dt timestamp [note: '更新時間']
+  update_user varchar(20) [note: '更新人員']
+  insert_dt timestamp [default: `now()`, note: '新增時間']
+  insert_user varchar(20) [note: '新增人員']
+
+  Note: '密碼驗證規則表'
+}
+
+// ---------------------------------------------------------------------------
+// 人事組織資料表（新設計，應用程式碼尚未串接，詳見 database_schema.md「備註」）
+// ---------------------------------------------------------------------------
+
+Table SYS_tbOrg {
+  Id integer [pk, increment, note: '流水號']
+  Code varchar(20) [note: '組織代碼（可對應人事系統組織代碼）']
+  Name varchar(50) [not null, note: '組織名稱']
+  ParentId integer [not null, default: 0, note: '父組織id；0=頂層，邏輯參照 Id，未建立實體 FK']
+  OrgType varchar(10) [note: '組織類型（如：處/部/課/組）']
+  Ord integer [not null, default: 0, note: '排序']
+  Manager_User_No varchar(20) [note: '主管帳號；與 SYS_tbUser 循環相依，FK 於建表後以 ALTER TABLE 補上']
+  Enabled boolean [not null, default: true, note: '是否啟用']
+  update_dt timestamp [note: '更新時間']
+  update_user varchar(20) [note: '更新人員']
+  insert_dt timestamp [not null, default: `now()`, note: '新增時間']
+  insert_user varchar(20) [note: '新增人員']
+
+  Note: '組織資料表'
+}
+
+Table SYS_tcRank [headercolor: #316896] {
+  Id integer [pk, increment, note: '流水號']
+  Code varchar(20) [note: '職等代碼（如：薦8）']
+  Name varchar(50) [not null, note: '職等名稱（如：薦任八職等）']
+  Level integer [not null, default: 0, note: '職等層級數值，數字越大代表職等越高']
+  Enabled boolean [not null, default: true, note: '是否啟用']
+  update_dt timestamp [note: '更新時間']
+  update_user varchar(20) [note: '更新人員']
+  insert_dt timestamp [not null, default: `now()`, note: '新增時間']
+  insert_user varchar(20) [note: '新增人員']
+
+  Note: '職等代碼表（SYS_tc 前綴首例）'
+}
+
+Table SYS_tbPosition [headercolor: #316896] {
+  Id integer [pk, increment, note: '流水號']
+  Code varchar(20) [note: '職稱代碼']
+  Name varchar(50) [not null, note: '職稱名稱']
+  Rank_id integer [note: '所屬職等id；一個職等可對應多個職稱']
+  Ord integer [not null, default: 0, note: '排序']
+  Enabled boolean [not null, default: true, note: '是否啟用']
+  update_dt timestamp [note: '更新時間']
+  update_user varchar(20) [note: '更新人員']
+  insert_dt timestamp [not null, default: `now()`, note: '新增時間']
+  insert_user varchar(20) [note: '新增人員']
+
+  Note: '職稱資料表'
+}
+
+Table SYS_tbGroup {
+  Id integer [pk, increment, note: '流水號']
+  Code varchar(20) [note: '群組代碼']
+  Name varchar(50) [not null, note: '群組名稱']
+  Description varchar(200) [note: '群組說明']
+  Enabled boolean [not null, default: true, note: '是否啟用']
+  update_dt timestamp [note: '更新時間']
+  update_user varchar(20) [note: '更新人員']
+  insert_dt timestamp [not null, default: `now()`, note: '新增時間']
+  insert_user varchar(20) [note: '新增人員']
+
+  Note: '權限群組資料表'
+}
+
+Table SYS_tbUser {
+  User_No varchar(20) [pk, note: '帳號/工號']
+  User_Name varchar(50) [not null, note: '姓名']
+  Password varchar(255) [note: '密碼（雜湊後儲存）']
+  Org_id integer [note: '所屬組織id']
+  Position_id integer [note: '職稱id']
+  UserGroup_id integer [note: '權限群組id']
+  Manager_User_No varchar(20) [note: '直屬主管帳號；自我參考，FK 於建表後以 ALTER TABLE 補上']
+  User_Tel varchar(20) [note: '聯絡電話']
+  Email varchar(100) [note: '電子郵件']
+  SystemSource varchar(10) [note: '系統來源（如 Web/App）']
+  UserType varchar(10) [note: '使用者類別']
+  IsActive boolean [not null, default: true, note: '是否在職/啟用']
+  HireDate date [note: '到職日']
+  ResignDate date [note: '離職日']
+  FailedLoginCount integer [not null, default: 0, note: '登入失敗次數']
+  LockoutEndDate timestamp [note: '帳號鎖定解除時間']
+  PasswordUpdateDate timestamp [note: '密碼最後更新時間']
+  update_dt timestamp [note: '更新時間']
+  update_user varchar(20) [note: '更新人員']
+  insert_dt timestamp [not null, default: `now()`, note: '新增時間']
+  insert_user varchar(20) [note: '新增人員']
+
+  Note: '使用者/員工資料表'
+}
+
+// ---------------------------------------------------------------------------
+// 代理人資料表
+// ---------------------------------------------------------------------------
+
+Table SYS_tbDelegate {
+  Id integer [pk, increment, note: '流水號']
+  Delegator_User_No varchar(20) [not null, note: '被代理人（委任人）帳號']
+  Delegate_User_No varchar(20) [not null, note: '代理人帳號']
+  ModuleCode varchar(10) [note: '代理範圍模組代碼；空值=全模組皆代理']
+  StartDate timestamp [not null, note: '代理生效時間']
+  EndDate timestamp [not null, note: '代理結束時間；提前結束時直接更新此欄位']
+  Reason varchar(100) [note: '代理原因（請假/出差/其他）']
+  Enabled boolean [not null, default: true, note: '是否啟用']
+  update_dt timestamp [note: '更新時間']
+  update_user varchar(20) [note: '更新人員']
+  insert_dt timestamp [not null, default: `now()`, note: '新增時間']
+  insert_user varchar(20) [note: '新增人員']
+
+  Note: '代理人設定表；「目前是否代理中」= Enabled AND now() BETWEEN StartDate AND EndDate；不能代理自己，EndDate>=StartDate'
+}
+
+// ---------------------------------------------------------------------------
+// 書表／文件管理資料表
+// ---------------------------------------------------------------------------
+
+Table DOC_tbDocument [headercolor: #8e44ad] {
+  DocType varchar(4) [pk, not null, default: 'DOC', note: '文件類型碼，固定為 DOC']
+  OrgCode varchar(10) [pk, not null, default: '', note: '組織／部門代碼；不分部門時為空字串']
+  PeriodKey varchar(8) [pk, not null, note: '日期序列碼，格式 YYYYMMDD']
+  Seq integer [pk, not null, note: '動態流水號']
+  DocumentId varchar(40) [unique, not null, note: 'DocType-OrgCode-PeriodKey-Seq，由前四欄計算產生']
+  DocumentName varchar(100) [not null, note: '書表／文件名稱']
+  Description varchar(500) [note: '文件說明']
+  LatestVersionNo integer [note: '目前主要發行版本號；NULL 表示尚未發行']
+  Enabled boolean [not null, default: true, note: '是否啟用']
+  insert_dt timestamp [not null, default: `now()`, note: '建立時間']
+  insert_user varchar(20) [note: '建立人員']
+  update_dt timestamp [note: '最後更新時間']
+  update_user varchar(20) [note: '最後更新人員']
+
+  Indexes {
+    Enabled
+  }
+
+  Note: '書表／文件主檔；複合鍵沿用 SYS_ttIssuedSerialNumber 發號結果，DocumentId 為衍生唯一鍵'
+}
+
+Table DOC_ttDocumentVersion [headercolor: #8e44ad] {
+  DocumentId varchar(40) [pk, not null, note: '所屬文件代碼 (FK: DOC_tbDocument.DocumentId)']
+  VersionNo integer [pk, not null, note: '文件版本號，由 1 起算']
+  FileName varchar(255) [not null, note: '原始檔名']
+  StorageKey varchar(500) [not null, note: '外部檔案儲存服務中的物件鍵或路徑']
+  ContentType varchar(100) [note: 'MIME 類型']
+  FileSize bigint [not null, default: 0, note: '檔案大小 (bytes)']
+  Sha256 varchar(64) [not null, note: '檔案內容 SHA-256 雜湊值']
+  Published_dt timestamp [note: '發行時間；NULL 表示草稿']
+  Published_user varchar(20) [note: '發行人員']
+  insert_dt timestamp [not null, default: `now()`, note: '建立時間']
+  insert_user varchar(20) [note: '建立人員']
+  update_dt timestamp [note: '最後修改時間']
+  update_user varchar(20) [note: '最後修改人員']
+
+  Indexes {
+    Published_dt
+  }
+
+  Note: '檔案版本紀錄；已發行版本不可覆寫或刪除，檔案本體存放於外部儲存服務'
+}
+
+Table DOC_ttDocumentAttachment [headercolor: #8e44ad] {
+  DocumentId varchar(40) [pk, not null, note: '文件代碼 (FK: DOC_ttDocumentVersion.DocumentId)']
+  VersionNo integer [pk, not null, note: '附加的文件版本 (FK: DOC_ttDocumentVersion.VersionNo)，固定附件內容版本']
+  BizTableName varchar(100) [pk, not null, note: '業務資料表名稱；多型關聯，不建立實體 FK']
+  BizDataId varchar(50) [pk, not null, note: '業務資料主鍵 ID，以文字儲存']
+  BizDocNo varchar(50) [note: '業務單號快照，僅供顯示或查詢']
+  Attached_dt timestamp [not null, default: `now()`, note: '建立附件關聯時間']
+  Attached_user varchar(20) [note: '建立附件關聯人員']
+
+  Indexes {
+    (BizTableName, BizDataId)
+  }
+
+  Note: '文件附件關聯；每筆固定關聯至特定文件版本，BizTableName/BizDataId 為多型關聯'
+}
+
+// ---------------------------------------------------------------------------
+// 電子簽核資料表
+// ---------------------------------------------------------------------------
+
+Table WF_tbDefine [headercolor: #16a085] {
+  DocType varchar(4) [pk, not null, default: 'WFD', note: '樣板類型碼，固定為 WFD']
+  OrgCode varchar(10) [pk, not null, default: '', note: '組織／部門代碼；不分部門時為空字串']
+  PeriodKey varchar(8) [pk, not null, note: '日期序列碼，依歸零週期：YYYY／YYYYMM／YYYYMMDD']
+  Seq integer [pk, not null, note: '動態流水號']
+  DefineId varchar(40) [unique, not null, note: 'DocType-OrgCode-PeriodKey-Seq，由前四欄計算產生']
+  VersionNo integer [note: '目前正式且已發行的版本號；必須指向同一 DefineId 下已存在且 Published_dt 非 NULL 的版本；NULL 表示尚未發行']
+  insert_dt timestamp [not null, default: `now()`, note: '建立時間']
+  insert_user varchar(20) [note: '建立人員']
+  update_dt timestamp [note: '最後更新時間']
+  update_user varchar(20) [note: '最後更新人員']
+
+  Indexes {
+    VersionNo
+  }
+
+  Note: '流程定義主檔／版本索引表；DefineId 為複合 PK 的衍生唯一鍵'
+}
+
+Table WF_tbDefineProcess [headercolor: #16a085] {
+  DefineId varchar(40) [pk, not null, note: '流程定義代碼 (FK: WF_tbDefine.DefineId)']
+  VersionNo integer [pk, not null, note: '流程版本號，由 1 起算']
+  ProcessName varchar(100) [not null, note: '流程名稱']
+  ProcessDesc varchar(500) [note: '流程說明']
+  Published_dt timestamp [note: '發行時間；NULL 表示尚未發行；非 NULL 表示版本曾被發行且不可再編輯']
+  Published_user varchar(20) [note: '發行人員']
+  insert_dt timestamp [not null, default: `now()`, note: '建立時間']
+  insert_user varchar(20) [note: '建立人員']
+  update_dt timestamp [note: '最後修改時間']
+  update_user varchar(20) [note: '最後修改人員']
+
+  Indexes {
+    Published_dt
+  }
+
+  Note: '流程定義樣板表（流程版本內容）；Published_dt 非 NULL 代表版本曾被發行，已發行版本不得編輯或更新；版本控制、發行與修改由應用層處理，應另存新版本'
+}
+
+Table WF_tbDefineNode [headercolor: #16a085] {
+  DefineId varchar(40) [pk, not null, note: '流程定義代碼 (FK: WF_tbDefineProcess.DefineId)']
+  VersionNo integer [pk, not null, note: '流程版本號 (FK: WF_tbDefineProcess.VersionNo)']
+  NodeCode varchar(20) [pk, not null, note: '關卡代碼，同一流程版本下唯一；格式 A~ZZ']
+  NodeName varchar(100) [not null, note: '關卡顯示名稱']
+  PrevNodeCode varchar(20) [note: '父流程節點；同一版本自我參考 FK；起始關卡為 NULL；多個節點可共用以形成平行分支']
+  RejectNodeCode varchar(20) [note: '退回流程節點；同一版本自我參考 FK；NULL 表示交由簽核引擎預設處理']
+  NodeSeq integer [not null, note: '由 PrevNodeCode 與流程圖計算後回填的拓撲排序快取']
+  NodeType varchar(20) [not null, note: '節點行為／流程控制類型：Approve/Countersign/Notify/Gateway']
+  ApproveMode varchar(20) [note: '決策／過關規則：Single/AndSign/OrSign；Notify/Gateway 時為 NULL']
+  TimeoutDays integer [not null, default: 7, note: '逾時天數']
+  TimeoutAction varchar(20) [not null, default: 'RETURN_TO_INITIATOR', note: '逾時處理類型：RETURN_TO_INITIATOR/FORWARD_TO_SUPERIOR/AUTO_APPROVE_NEXT']
+  update_dt timestamp [note: '更新時間']
+  update_user varchar(20) [note: '更新人員']
+  insert_dt timestamp [not null, default: `now()`, note: '新增時間']
+  insert_user varchar(20) [note: '新增人員']
+
+  Indexes {
+    (DefineId, VersionNo, NodeSeq) [unique]
+  }
+
+  Note: '流程定義關卡節點表；允許流程循環，NodeSeq 僅供查詢/顯示與應用層推演；應用層提供可完成性分析與警示，是否發行及設計是否完整由流程設計師決定；Approve/Countersign 必須指定 ApproveMode，Notify/Gateway 不適用；已發行版本不得編輯或更新，版本控制由應用層處理'
+}
+
+Table WF_tbDefineNodeApprover [headercolor: #16a085] {
+  DefineId varchar(40) [pk, not null, note: '流程定義代碼 (FK: WF_tbDefineNode.DefineId)']
+  VersionNo integer [pk, not null, note: '流程版本號 (FK: WF_tbDefineNode.VersionNo)']
+  NodeCode varchar(20) [pk, not null, note: '關卡代碼 (FK: WF_tbDefineNode.NodeCode)']
+  ApproverSeq integer [pk, not null, note: '簽核人序號，由 1 起算；僅代表資料列識別，不代表簽核順序']
+  ApproveRole varchar(20) [note: 'Approve/Countersign 時為簽核角色；Notify 時為被知會角色；由程式碼定義']
+  ApproveUser_No varchar(20) [note: 'Approve/Countersign 時為簽核人員；Notify 時為被知會人員 (FK: SYS_tbUser.User_No)']
+  update_dt timestamp [note: '更新時間']
+  update_user varchar(20) [note: '更新人員']
+  insert_dt timestamp [not null, default: `now()`, note: '新增時間']
+  insert_user varchar(20) [note: '新增人員']
+
+  Indexes {
+    ApproveUser_No
+  }
+
+  Note: '流程定義關卡簽核人表；Notify 節點中記錄被知會對象；ApproveRole 或 ApproveUser_No 至少填一；Gateway 不可配置簽核人；已發行版本不得編輯或更新，版本控制由應用層處理'
+}
+
+Table WF_ttProcess [headercolor: #16a085] {
+  DocType varchar(4) [pk, not null, default: 'WF', note: '業務／單據類型碼，固定為 WF']
+  OrgCode varchar(10) [pk, not null, default: '', note: '組織／部門代碼']
+  PeriodKey varchar(8) [pk, not null, note: '日期序列碼，格式 YYYYMMDD']
+  Seq integer [pk, not null, note: '動態流水號']
+  Id varchar(40) [unique, not null, note: 'DocType-OrgCode-PeriodKey-Seq，由前四欄計算產生；展示用衍生欄位，非本表 PK']
+  DefineId varchar(40) [not null, note: '關聯使用的流程定義代碼 (與 DefineVersionNo 組成 FK: WF_tbDefineProcess)']
+  DefineVersionNo integer [not null, note: '發起時固定使用的流程版本號；正式送出時由應用層驗證當時等於 WF_tbDefine.VersionNo 且已發行，送出後不受目前版本切換影響；與 DefineId 組成 FK: WF_tbDefineProcess']
+  BizDocNo varchar(50) [note: '業務單號']
+  BizTableName varchar(100) [note: '綁定的業務系統／表名；由程式碼定義，非資料庫 FK；簽核中鎖檔由應用層處理']
+  BizDataId varchar(50) [note: '綁定的業務資料主鍵 ID，以文字儲存；防止簽核中重複送簽由應用層處理']
+  Subject varchar(200) [not null, note: '簽核主旨']
+  Content text [note: '簽核內容／申請正文；保存主旨以外的詳細說明']
+  InitiatorUser_No varchar(20) [not null, note: '發起人帳號 (FK: SYS_tbUser.User_No)']
+  CurrentNodeCode varchar(20) [note: '目前停留的執行期關卡代碼；草稿為 NULL (與 Id 組成 FK: WF_ttProcessNode.(Id, NodeCode))']
+  ProcessStatus varchar(20) [not null, default: 'DRAFT', note: '流程總狀態：DRAFT/IN_PROGRESS/APPROVED/WITHDRAWN；狀態轉換由應用層維護']
+  StartTime timestamp [note: 'DRAFT 時為 NULL；進入 IN_PROGRESS 時由應用層寫入']
+  EndTime timestamp [note: '進入 APPROVED 或 WITHDRAWN 時由應用層寫入']
+  update_dt timestamp [note: '更新時間']
+  update_user varchar(20) [note: '更新人員']
+  insert_dt timestamp [not null, default: `now()`, note: '新增時間']
+  insert_user varchar(20) [note: '新增人員']
+
+  Indexes {
+    (DefineId, DefineVersionNo)
+    InitiatorUser_No
+    ProcessStatus
+    (BizTableName, BizDataId) // 一般索引，供應用層檢查進行中流程；不具唯一性
+  }
+
+  Note: '流程實例表；固定參照發起當下採用的流程版本；平行分支以下游 Gateway 作為合流標記，等待合流時 CurrentNodeCode 指向 Gateway，分支完成判斷與推進由應用層在同一交易維護；DRAFT/IN_PROGRESS/APPROVED/WITHDRAWN 狀態與時間欄位亦由應用層維護；WITHDRAWN 時受影響節點更新為 REJECTED'
+}
+
+Table WF_ttProcessNode [headercolor: #16a085] {
+  Id varchar(40) [pk, not null, note: '所屬流程實例鍵 (FK: WF_ttProcess.Id)']
+  NodeCode varchar(20) [pk, not null, note: '關卡代碼；複製自樣板或動態插入時另行產生，格式 A~ZZ']
+  NodeName varchar(100) [not null, note: '關卡顯示名稱（複製自樣板，或加簽/會辦時填入）']
+  PrevNodeCode varchar(20) [note: '父流程節點；同一流程實例自我參考 FK；起始關卡為 NULL；多個節點可共用以形成平行分支']
+  RejectNodeCode varchar(20) [note: '退回流程節點；同一流程實例自我參考 FK；NULL 表示交由簽核引擎預設處理']
+  NodeSeq integer [not null, note: '由 PrevNodeCode 與流程圖計算後回填的拓撲排序快取']
+  NodeType varchar(20) [not null, note: '節點行為／流程控制類型：Approve/Countersign/Notify/Gateway，或動態插入的 PRE_ADD/POST_ADD/COORDINATE']
+  ApproveMode varchar(20) [note: '決策／過關規則：Single/AndSign/OrSign；Notify/Gateway 時為 NULL']
+  TimeoutDays integer [not null, default: 7, note: '逾時天數']
+  TimeoutAction varchar(20) [not null, default: 'RETURN_TO_INITIATOR', note: '逾時處理類型：RETURN_TO_INITIATOR/FORWARD_TO_SUPERIOR/AUTO_APPROVE_NEXT']
+  IsDynamicNode boolean [not null, default: false, note: '是否為執行期臨時動態插入的節點']
+  NodeStatus varchar(20) [not null, default: 'PENDING', note: '節點簽核狀態：PENDING/APPROVED/REJECTED/SKIPPED/WITHDRAWN']
+  GeneratedTime timestamp [not null, default: `now()`, note: '生成時間']
+  CompleteTime timestamp [note: '完成時間（進入終態的時間）']
+  update_dt timestamp [note: '更新時間']
+  update_user varchar(20) [note: '更新人員']
+  insert_dt timestamp [not null, default: `now()`, note: '新增時間']
+  insert_user varchar(20) [note: '新增人員']
+
+  Indexes {
+    (Id, NodeSeq) [unique]
+    NodeStatus
+    IsDynamicNode
+  }
+
+  Note: '執行期關卡節點/狀態表；簽核發起前由 WF_tbDefineNode 逐筆複製而來的快照，不對其建立實體 FK；前加簽/後加簽/會辦動態插入新關卡列，並行加簽只改既有關卡的 ApproveMode 與 WF_ttProcessNodeAssignee'
+}
+
+Table WF_ttProcessNodeAssignee [headercolor: #16a085] {
+  Id varchar(40) [pk, not null, note: '所屬流程實例鍵 (與 NodeCode 組成 FK: WF_ttProcessNode.(Id, NodeCode))']
+  NodeCode varchar(20) [pk, not null, note: '關卡代碼']
+  ApproveUser_No varchar(20) [pk, not null, note: '簽核人帳號 (FK: SYS_tbUser.User_No)']
+  update_dt timestamp [note: '更新時間']
+  update_user varchar(20) [note: '更新人員']
+  insert_dt timestamp [not null, default: `now()`, note: '新增時間']
+  insert_user varchar(20) [note: '新增人員']
+
+  Indexes {
+    ApproveUser_No
+  }
+
+  Note: '節點簽核人員表；僅保存本次實際指派的確定帳號，不含目前狀態/意見/時間；逐人狀態以 WF_ttProcessSign 為準，由應用層分析後更新 WF_ttProcess.CurrentNodeCode'
+}
+
+Table WF_ttProcessSign [headercolor: #16a085] {
+  Id varchar(40) [pk, not null, note: '所屬流程實例鍵 (FK: WF_ttProcess.Id)']
+  NodeCode varchar(20) [pk, not null, note: '關卡代碼']
+  SignSeq integer [pk, not null, note: '簽核流水號，同一關卡下由 1 起算']
+  ApproveUser_No varchar(20) [note: '實際簽核人員帳號；系統產生的撤回/跳過/逾時事件可為 NULL (與 Id, NodeCode 組成 FK: WF_ttProcessNodeAssignee)']
+  SignStatus varchar(20) [not null, note: '簽核事件：APPROVE(同意)/REJECT(退件)/TRANSFER(轉簽)/WITHDRAW(撤回)/SKIP(跳過)/TIMEOUT(逾時)']
+  SignComment varchar(500) [note: '簽核意見/評語']
+  Signature bytea [note: '自然人憑證數位簽章']
+  SignTime timestamp [not null, default: `now()`, note: '簽核時間']
+  TimeoutAction varchar(20) [note: 'SignStatus=TIMEOUT 時必填；其他事件為 NULL；RETURN_TO_INITIATOR/FORWARD_TO_SUPERIOR/AUTO_APPROVE_NEXT']
+
+  Indexes {
+    ApproveUser_No
+    SignStatus
+  }
+
+  Note: '簽核事件與紀錄表；append-only，只允許 INSERT，禁止 UPDATE/DELETE；為逐人簽核狀態的唯一歷程來源；資料庫以部分唯一索引保證同一流程/關卡/簽核人的第一筆人工 APPROVE/REJECT/TRANSFER 事件有效；應用層分析當下事件歷程後更新 WF_ttProcess.CurrentNodeCode；撤回、跳過、逾時皆寫入本表；TIMEOUT 事件須在 TimeoutAction 記錄逾時處理類型'
+}
+
+// ---------------------------------------------------------------------------
+// 系統交易/紀錄表
+// ---------------------------------------------------------------------------
+
+Table SYS_ttLog {
+  Id bigint [pk, increment, note: '流水號']
+  User_No varchar(20) [note: '帳號；未登入時寫入空字串而非 NULL，邏輯參照 SYS_tbUser.User_No，未建立實體 FK']
+  WebPage varchar(100) [note: '網頁路徑']
+  Api varchar(100) [note: 'API']
+  PostData text [note: '傳送資料']
+  Token text [note: 'web token']
+  ReturnNumber varchar(5) [note: '回傳狀態代碼']
+  ReturnMsg text [note: '回傳訊息']
+  SystemTime timestamp [not null, default: `now()`, note: '系統時間']
+
+  Note: '操作日誌表'
+}
+
+Table SYS_ttToken {
+  TokenTime varchar(20) [pk, note: '時間戳記']
+  Token text [note: 'token']
+  SignOut timestamp [note: '登出時間']
+
+  Note: 'Token管理表；與 SYS_tbUser 無直接 FK，TokenTime 對應登入時 Token payload 的時間戳'
+}
+
+// ---------------------------------------------------------------------------
+// 關聯（含未建立實體 FK 約束的邏輯關聯，皆已於欄位 note 標註原因）
+// ---------------------------------------------------------------------------
+
+Ref: SYS_tbMenu.ParentId > SYS_tbMenu.Id // 選單自我參考（0=頂層，未建立實體 FK）
+Ref: SYS_tbOrg.ParentId > SYS_tbOrg.Id // 組織自我參考（0=頂層，未建立實體 FK）
+Ref: SYS_tbOrg.Manager_User_No > SYS_tbUser.User_No // 組織主管；與下方使用者 FK 形成循環相依
+Ref: SYS_tbPosition.Rank_id > SYS_tcRank.Id // 職稱所屬職等
+Ref: SYS_tbUser.Org_id > SYS_tbOrg.Id // 使用者所屬組織
+Ref: SYS_tbUser.Position_id > SYS_tbPosition.Id // 使用者職稱
+Ref: SYS_tbUser.UserGroup_id > SYS_tbGroup.Id // 使用者權限群組
+Ref: SYS_tbUser.Manager_User_No > SYS_tbUser.User_No // 使用者自我參考（直屬主管）
+Ref: SYS_tbDelegate.Delegator_User_No > SYS_tbUser.User_No // 被代理人（委任人）
+Ref: SYS_tbDelegate.Delegate_User_No > SYS_tbUser.User_No // 代理人
+Ref: DOC_tbDocument.(DocType, OrgCode, PeriodKey, Seq) > SYS_ttIssuedSerialNumber.(DocType, OrgCode, PeriodKey, Seq) // 文件編號沿用統一發號結果
+Ref: DOC_ttDocumentVersion.DocumentId > DOC_tbDocument.DocumentId // 檔案版本所屬文件
+Ref: DOC_tbDocument.(DocumentId, LatestVersionNo) > DOC_ttDocumentVersion.(DocumentId, VersionNo) // 主檔目前發行版本
+Ref: DOC_ttDocumentAttachment.(DocumentId, VersionNo) > DOC_ttDocumentVersion.(DocumentId, VersionNo) // 附件固定指向文件版本
+Ref: SYS_ttLog.User_No > SYS_tbUser.User_No // 操作日誌帳號，邏輯關聯，未建立實體 FK
+Ref: SYS_ttIssuedSerialNumber.IssuedUser_No > SYS_tbUser.User_No // 開立帳號，邏輯關聯，未建立實體 FK
+Ref: WF_tbDefineProcess.DefineId > WF_tbDefine.DefineId // 流程版本內容所屬的流程定義
+Ref: WF_tbDefineNode.(DefineId, VersionNo) > WF_tbDefineProcess.(DefineId, VersionNo) // 關卡節點所屬的流程版本
+Ref: WF_tbDefineNode.(DefineId, VersionNo, PrevNodeCode) > WF_tbDefineNode.(DefineId, VersionNo, NodeCode) // 父關卡（自我參考；可一對多形成平行分支）
+Ref: WF_tbDefineNode.(DefineId, VersionNo, RejectNodeCode) > WF_tbDefineNode.(DefineId, VersionNo, NodeCode) // 退回關卡（自我參考）
+Ref: WF_tbDefineNodeApprover.(DefineId, VersionNo, NodeCode) > WF_tbDefineNode.(DefineId, VersionNo, NodeCode) // 簽核人設定所屬的關卡
+Ref: WF_tbDefineNodeApprover.ApproveUser_No > SYS_tbUser.User_No // 簽核人員
+Ref: WF_ttProcess.(DocType, OrgCode, PeriodKey, Seq) > SYS_ttIssuedSerialNumber.(DocType, OrgCode, PeriodKey, Seq) // 流程實例鍵直接沿用發號結果
+Ref: WF_ttProcess.(DefineId, DefineVersionNo) > WF_tbDefineProcess.(DefineId, VersionNo) // 流程實例所依循的流程版本
+Ref: WF_ttProcess.InitiatorUser_No > SYS_tbUser.User_No // 流程發起人
+Ref: WF_ttProcessNode.Id > WF_ttProcess.Id // 執行期關卡節點所屬的流程實例
+Ref: WF_ttProcessNode.(Id, PrevNodeCode) > WF_ttProcessNode.(Id, NodeCode) // 父關卡（自我參考；可一對多形成平行分支）
+Ref: WF_ttProcessNode.(Id, RejectNodeCode) > WF_ttProcessNode.(Id, NodeCode) // 退回關卡（自我參考）
+Ref: WF_ttProcess.(Id, CurrentNodeCode) > WF_ttProcessNode.(Id, NodeCode) // 流程實例目前停留的執行期關卡
+Ref: WF_ttProcessNodeAssignee.(Id, NodeCode) > WF_ttProcessNode.(Id, NodeCode) // 簽核人設定所屬的執行期關卡
+Ref: WF_ttProcessNodeAssignee.ApproveUser_No > SYS_tbUser.User_No // 簽核人員
+Ref: WF_ttProcessSign.Id > WF_ttProcess.Id // 簽核歷程所屬的流程實例
+Ref: WF_ttProcessSign.(Id, NodeCode) > WF_ttProcessNode.(Id, NodeCode) // 簽核歷程所屬的執行期關卡
+Ref: WF_ttProcessSign.(Id, NodeCode, ApproveUser_No) > WF_ttProcessNodeAssignee.(Id, NodeCode, ApproveUser_No) // 人工執行動作的人須為該關卡的指派簽核人之一；系統撤回/跳過/逾時事件的 ApproveUser_No 可為 NULL
+
+// ---------------------------------------------------------------------------
+// 分組（僅影響 dbdiagram.io 畫布上的視覺分區）
+// ---------------------------------------------------------------------------
+
+TableGroup 系統資料表 {
+  SYS_tbMenu
+  SYS_tbPasswordValidationRules
+}
+
+TableGroup 編碼序號管理 {
+  SYS_ttIssuedSerialNumber
+}
+
+TableGroup 人事組織資料表 {
+  SYS_tbOrg
+  SYS_tcRank
+  SYS_tbPosition
+  SYS_tbGroup
+  SYS_tbUser
+}
+
+TableGroup 書表資料表 {
+  DOC_ttDocumentAttachment
+  DOC_tbDocument
+  DOC_ttDocumentVersion  
+}
+
+TableGroup 代理人資料表 {
+  SYS_tbDelegate
+}
+
+TableGroup 電子簽核資料表 {
+  WF_tbDefine
+  WF_tbDefineProcess
+  WF_tbDefineNode
+  WF_tbDefineNodeApprover
+  WF_ttProcess
+  WF_ttProcessNode
+  WF_ttProcessNodeAssignee
+  WF_ttProcessSign
+}
+
+TableGroup 系統交易紀錄表 {
+  SYS_ttLog
+  SYS_ttToken
+}
