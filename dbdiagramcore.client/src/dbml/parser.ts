@@ -603,7 +603,11 @@ class Parser {
   projectDef() {
     this.next()
     const p: ProjectInfo = {}
-    if (this.tok.kind === 'ident' || this.tok.kind === 'qident') p.name = this.next().value
+    if (this.tok.kind === 'ident' || this.tok.kind === 'qident') {
+      const t = this.next()
+      p.name = t.value
+      p.nameRange = { from: t.from, to: t.to }
+    }
     this.block(() => {
       if (this.isNoteStart()) {
         this.next()

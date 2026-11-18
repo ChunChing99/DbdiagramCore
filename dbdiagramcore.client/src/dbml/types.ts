@@ -134,6 +134,8 @@ export interface StickyNote {
 
 export interface ProjectInfo {
   name?: string
+  /** Where the name is written in the source (including quotes). */
+  nameRange?: Range
   databaseType?: string
   note?: string
 }

@@ -49,6 +49,40 @@ namespace DbdiagramCore.Server.Controllers
             return Ok(new { file = Path.GetFileName(path) });
         }
 
+        /// <summary>刪除 Dbml/{name}.dbml。</summary>
+        [HttpDelete("{name}")]
+        public IActionResult Delete(string name)
+        {
+            var safe = SanitizeFileName(name);
+            if (safe.Length == 0) return BadRequest("無效的專案名稱");
+            var path = Path.Combine(_folder, safe + ".dbml");
+            if (!System.IO.File.Exists(path)) return NotFound();
+            System.IO.File.Delete(path);
+            return NoContent();
+        }
+
+        public record RenameRequest(string NewName);
+
+        /// <summary>將 Dbml/{name}.dbml 改名為 Dbml/{NewName}.dbml。</summary>
+        [HttpPost("{name}/rename")]
+        public IActionResult Rename(string name, [FromBody] RenameRequest req)
+        {
+            var from = SanitizeFileName(name);
+            var to = SanitizeFileName(req.NewName);
+            if (from.Length == 0 || to.Length == 0) return BadRequest("無效的專案名稱");
+
+            var fromPath = Path.Combine(_folder, from + ".dbml");
+            var toPath = Path.Combine(_folder, to + ".dbml");
+            if (!System.IO.File.Exists(fromPath)) return NotFound();
+            if (from == to) return Ok(new { file = Path.GetFileName(toPath) });
+            // a case-only change is the same file on Windows
+            var sameFile = string.Equals(from, to, StringComparison.OrdinalIgnoreCase);
+            if (!sameFile && System.IO.File.Exists(toPath)) return Conflict($"專案「{to}」已存在");
+
+            System.IO.File.Move(fromPath, toPath);
+            return Ok(new { file = Path.GetFileName(toPath) });
+        }
+
         private static string SanitizeFileName(string? name)
         {
             if (string.IsNullOrWhiteSpace(name)) return string.Empty;

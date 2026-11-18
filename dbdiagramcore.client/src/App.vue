@@ -2,20 +2,24 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import DbmlEditor from './components/DbmlEditor.vue'
 import DiagramCanvas from './components/DiagramCanvas.vue'
+import NewProjectDialog from './components/NewProjectDialog.vue'
 import TableEditDialog from './components/TableEditDialog.vue'
 import { SAMPLE_DBML } from './dbml/sample'
 import { toSql, type Dialect } from './dbml/sql'
 import { downloadText } from './diagram/export'
 import {
   currentProject,
+  deleteProject,
   errorCount,
   fileName,
+  newDocument,
   openProject,
   parsed,
   positions,
   projects,
   refreshProjects,
   relayout,
+  renameProject,
   reveal,
   setUrlProject,
   source,
@@ -27,6 +31,7 @@ const editingTable = ref<string | null>(null)
 const exportOpen = ref(false)
 const projectsOpen = ref(false)
 const errorsOpen = ref(false)
+const newProjectOpen = ref(false)
 const fileInput = ref<HTMLInputElement>()
 
 // ---------- split pane ----------
@@ -78,10 +83,49 @@ function loadSample() {
   setTimeout(() => canvas.value?.fit(), 50)
 }
 function newDoc() {
-  if (source.value.trim() && !confirm('建立新文件會清除目前的內容，確定嗎？')) return
-  positions.value = {}
-  source.value = 'Table users {\n  id integer [pk, increment]\n  name varchar\n}\n'
+  // a document with a Project name is already saved on the server
+  if (!currentProject.value && source.value.trim() && !confirm('目前內容沒有 Project 名稱，不會存到伺服器，建立新文件後將被清除，確定嗎？'))
+    return
+  refreshProjects()
+  newProjectOpen.value = true
+}
+function createProject(name: string, dbml: string) {
+  newProjectOpen.value = false
+  newDocument(dbml)
+  setUrlProject(name, true)
+  toast(`已建立專案「${name}」`)
   setTimeout(() => canvas.value?.fit(), 50)
+}
+const renaming = ref<string>()
+const renameDialog = ref<InstanceType<typeof NewProjectDialog>>()
+function openRename() {
+  projectsOpen.value = false
+  refreshProjects()
+  renaming.value = currentProject.value
+}
+async function doRename(name: string) {
+  const err = await renameProject(name)
+  if (err) {
+    renameDialog.value?.done()
+    return toast(err)
+  }
+  renaming.value = undefined
+  toast(`已將專案重新命名為「${name}」`)
+}
+async function removeProject(name: string) {
+  const wasCurrent = name === currentFile.value
+  const msg = wasCurrent
+    ? `確定要刪除目前開啟的專案「${name}」嗎？伺服器上的檔案會被刪除，且無法復原。`
+    : `確定要刪除專案「${name}」嗎？伺服器上的檔案會被刪除，且無法復原。`
+  if (!confirm(msg)) return
+  const err = await deleteProject(name)
+  if (err) return toast(err)
+  toast(`已刪除專案「${name}」`)
+  if (!wasCurrent) return
+  projectsOpen.value = false
+  // open the most recently modified remaining project, if any
+  const next = projects.value[0]
+  if (next) await loadProject(next, false)
 }
 function importFile(e: Event) {
   const f = (e.target as HTMLInputElement).files?.[0]
@@ -174,10 +218,17 @@ onBeforeUnmount(() => {
             / {{ currentProject ?? '選擇專案' }} <span class="caret">▾</span>
           </button>
           <div v-if="projectsOpen" class="dropdown-menu left">
-            <button v-for="p in projects" :key="p" :class="{ active: p === currentFile }" @click="chooseProject(p)">
-              {{ p }}
-            </button>
+            <div v-for="p in projects" :key="p" class="project-row">
+              <button class="name" :class="{ active: p === currentFile }" @click="chooseProject(p)">
+                {{ p }}
+              </button>
+              <button class="del" title="刪除專案" @click.stop="removeProject(p)">🗑</button>
+            </div>
             <div v-if="!projects.length" class="empty">尚無已儲存的專案</div>
+            <template v-if="currentProject">
+              <hr />
+              <button @click="openRename">重新命名目前專案…</button>
+            </template>
           </div>
         </div>
       </div>
@@ -229,6 +280,14 @@ onBeforeUnmount(() => {
     </main>
 
     <TableEditDialog v-if="editingTable" :key="editingTable" :table-id="editingTable" @close="editingTable = null" @toast="toast" />
+    <NewProjectDialog v-if="newProjectOpen" @close="newProjectOpen = false" @create="createProject" />
+    <NewProjectDialog
+      v-if="renaming !== undefined"
+      ref="renameDialog"
+      :rename="renaming"
+      @close="renaming = undefined"
+      @rename="doRename"
+    />
     <transition name="fade">
       <div v-if="toastMsg" class="toast">{{ toastMsg }}</div>
     </transition>
@@ -286,6 +345,27 @@ onBeforeUnmount(() => {
   background: #eaf2fe;
   color: #1f6fd9;
   font-weight: 600;
+}
+.project-row {
+  display: flex;
+  align-items: center;
+}
+.project-row > button.name {
+  flex: 1;
+  min-width: 0;
+}
+.project-row > button.del {
+  flex: none;
+  opacity: 0;
+  padding: 5px 7px;
+  font-size: 12px;
+}
+.project-row:hover > button.del {
+  opacity: 0.6;
+}
+.project-row > button.del:hover {
+  opacity: 1;
+  background: #ffebe9;
 }
 .dropdown-menu .empty {
   padding: 7px 10px;
